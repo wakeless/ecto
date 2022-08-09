@@ -10,6 +10,7 @@ defmodule Ecto.Integration.PreloadTest do
   alias Ecto.Integration.Permalink
   alias Ecto.Integration.User
   alias Ecto.Integration.Custom
+  alias Ecto.Integration.Tag
 
   test "preload with parameter from select_merge" do
     p1 = TestRepo.insert!(%Post{title: "p1"})
@@ -711,4 +712,25 @@ defmodule Ecto.Integration.PreloadTest do
   defp sort_by_id(values) do
     Enum.sort_by(values, &(&1.id))
   end
+
+  test "preload from nested embedded schema" do
+    :debugger.start()
+    :int.ni(Ecto.Repo.Preloader)
+    # :int.break(Ecto.Repo.Preloader, 623)
+    # :int.break(Ecto.Repo.Preloader, 209)
+    # :int.break(Ecto.Repo.Preloader, 211)
+    # :int.break(Ecto.Repo.Preloader, 87)
+    # :int.break(Ecto.Repo.Preloader, 69)
+    # :int.break(Ecto.Repo.Preloader, 197)
+    %User{id: uid1} = TestRepo.insert!(%User{name: "1"})
+    %User{id: uid2} = TestRepo.insert!(%User{name: "2"})
+    item = %Item{user_id: uid1}
+    tag = %Tag{ints: [], items: [item], user_id: uid2}
+
+    assert [%Item{user: %Ecto.Association.NotLoaded{}}] = tag.items
+
+    tag = TestRepo.preload(tag, [user: :posts, items: :user])
+    assert [%Item{user: %User{id: ^uid1}}] = tag.items
+  end
+
 end

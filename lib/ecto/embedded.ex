@@ -283,4 +283,9 @@ defmodule Ecto.Embedded do
   def build(%Embedded{related: related}, _owner) do
     related.__struct__
   end
+
+  @impl true
+  def preload_info(%{field: _field} = refl) do
+    {:embed, refl, []}
+  end
 end

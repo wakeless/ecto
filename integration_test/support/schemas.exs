@@ -219,6 +219,7 @@ defmodule Ecto.Integration.Tag do
     field :ints, {:array, :integer}
     field :uuids, {:array, Ecto.Integration.TestRepo.uuid()}
     embeds_many :items, Ecto.Integration.Item
+    belongs_to :user, Ecto.Integration.User
   end
 end
 

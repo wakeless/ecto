@@ -63,13 +63,16 @@ defmodule Ecto.Repo.Preloader do
     if sample = Enum.find(structs, & &1) do
       module = sample.__struct__
       prefix = preload_prefix(tuplet, sample)
-      {assocs, throughs} = expand(module, preloads, {%{}, %{}})
+      {assocs, throughs, embeds} = expand(module, preloads, {%{}, %{}, %{}})
 
       {fetched_assocs, to_fetch_queries} =
         prepare_queries(structs, module, assocs, prefix, repo_name, tuplet)
 
       fetched_queries = maybe_pmap(to_fetch_queries, repo_name, tuplet)
       assocs = preload_assocs(fetched_assocs, fetched_queries, repo_name, tuplet)
+
+      structs = preload_embeds(structs, Map.values(embeds), repo_name, tuplet)
+
       throughs = Map.values(throughs)
 
       for struct <- structs do
@@ -150,6 +153,24 @@ defmodule Ecto.Repo.Preloader do
     all = preload_each(Enum.reverse(loaded_structs, fetch_structs), repo_name, preloads, tuplet)
     entry = {:assoc, assoc, assoc_map(assoc.cardinality, Enum.reverse(loaded_ids, fetch_ids), all)}
     [entry | preload_assocs(assocs, queries, repo_name, tuplet)]
+  end
+
+  defp preload_embeds(structs, [], _repo_name, _tuplet), do: structs
+
+  # walk into each embedded field and then recurse the rest of the tree
+  defp preload_embeds(
+         structs,
+         [{rel, nest} | embeds],
+        #  queries,
+         repo_name,
+         tuplet
+       ) do
+    {:embed, assoc, embeds} = rel
+    %{cardinality: cardinality, field: field, owner: _owner} = assoc
+    Enum.map(structs, fn struct ->
+      {:ok, loaded} = maybe_first(Map.fetch(struct, field), cardinality)
+      Map.put(struct, field, preload_each(loaded, repo_name, nest, tuplet))
+    end)
   end
 
   defp preload_assocs([], [], _repo_name, _tuplet), do: []
@@ -493,7 +514,7 @@ defmodule Ecto.Repo.Preloader do
   ## Expand
 
   def expand(schema, preloads, acc) do
-    Enum.reduce(preloads, acc, fn {preload, {fields, query, sub_preloads}}, {assocs, throughs} ->
+    Enum.reduce(preloads, acc, fn {preload, {fields, query, sub_preloads}}, {assocs, throughs, embeds} ->
       assoc = association_from_schema!(schema, preload)
       info  = assoc.__struct__.preload_info(assoc)
 
@@ -501,14 +522,18 @@ defmodule Ecto.Repo.Preloader do
         {:assoc, _, _} ->
           value  = {info, fields, query, sub_preloads}
           assocs = Map.update(assocs, preload, value, &merge_preloads(preload, value, &1))
-          {assocs, throughs}
+          {assocs, throughs, embeds}
         {:through, _, through} ->
           through =
             through
             |> Enum.reverse()
             |> Enum.reduce({fields, query, sub_preloads}, &{nil, nil, [{&1, &2}]})
             |> elem(2)
-          expand(schema, through, {assocs, Map.put(throughs, preload, info)})
+          expand(schema, through, {assocs, Map.put(throughs, preload, info), embeds})
+        {:embed, _, _} ->
+          value  = {info, sub_preloads}
+          embeds = Map.update(embeds, preload, value, &merge_preloads(preload, value, &1))
+          {assocs, throughs, embeds}
       end
     end)
   end
@@ -526,6 +551,7 @@ defmodule Ecto.Repo.Preloader do
   # We reimplement this function here for nice error messages.
   defp association_from_schema!(schema, assoc) do
     schema.__schema__(:association, assoc) ||
+    schema.__schema__(:embed, assoc) ||
       raise ArgumentError,
             "schema #{inspect schema} does not have association #{inspect assoc}#{maybe_module(assoc)}"
   end
